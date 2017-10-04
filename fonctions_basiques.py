@@ -494,24 +494,27 @@ def set_scalaires_actifs(input, array_name, loc = 'points'):
 #_____________________________________________________________________________________
 
 #_____________________________________________________________________________________
-def VTKProbe(input, source):
+def VTKProbe(input, source, tolerance=None):
     """probe generique - mono/multi bloc par mono/multi bloc
     
     input contient la GEOMETRIE sur laquelle interpoler les donnees NOUVEAU
     source contient le maillage qui contient les donnees ANCIEN
+    
+    tolerance permet de faire des trucs. Essayer des valeurs, 0.1 par exemple. 
+    Voir la doc du vtkProbeFilter. 
     """
     if isinstance(input, vtk.vtkMultiBlockDataSet):
         output = vtk.vtkMultiBlockDataSet()
         for numbloc in get_numeros_blocs_non_vides(input):
             print "probe par le bloc {0} de input".format(numbloc)
-            output.SetBlock(numbloc, VTKProbe(input = input.GetBlock(numbloc), source = source))
+            output.SetBlock(numbloc, VTKProbe(input = input.GetBlock(numbloc), source = source, tolerance=tolerance))
     elif isinstance(source, vtk.vtkMultiBlockDataSet):
         output = vtk_new_shallowcopy(input)
         dict_data = {}
         
         for numbloc in get_numeros_blocs_non_vides(source):
             print "probe du bloc {0} de la source".format(numbloc)
-            bloc = VTKProbe(input, source.GetBlock(numbloc))
+            bloc = VTKProbe(input, source.GetBlock(numbloc), tolerance=tolerance)
             
             for nom_array in get_noms_arrays_presents(bloc, loc = 'points'):
                 array = get_vtk_array_as_numpy_array(bloc, nom_array)
@@ -570,6 +573,10 @@ def VTKProbe(input, source):
             filtre.SetSource(source)
         except:
             filtre.SetSourceData(source)
+        if tolerance is not None:
+            filtre.ComputeToleranceOff()
+            filtre.SetTolerance(tolerance)
+            print 'TOLERANCE pour vtkProbeFilter reglee manuellement a {0}'.format(tolerance)
         filtre.Update()
         
         #on ajoute ce qu'on a probe a output
@@ -1894,12 +1901,13 @@ def create_bloc_non_structure_from_numpy_array(coords, cells, cellstypes, cellsl
 #_____________________________________________________________________
 
 #__________________________________________________________________________________________
-def create_polydata_from_numpy_array(coords, polys=None, nb_polys=None):
+def create_polydata_from_numpy_array(coords, polys=None, nb_polys=None, isline=False):
     """Fonction qui retourne une surface polydata a partir de numpy array
     Les entrees a donner sont :
         - coords :          un numpy_array de dimension (nb_points, 3) qui contient les coordonnees des points.
         - polys :           les polydata = connectivite 
         - nb_polys :        le nombre de cellules
+        - isline :          dans le cas ou c'est une ligne qu'on veut creer, et non pas une surface. 
     """
     #creation du bloc
     bloc = vtk.vtkPolyData()
@@ -1923,7 +1931,8 @@ def create_polydata_from_numpy_array(coords, polys=None, nb_polys=None):
             polys.ravel(), deep = 1, array_type = vtk.vtkIdTypeArray().GetDataType()
             ))
         
-        bloc.SetPolys(vtkCells)
+        bloc.SetPolys(vtkCells) if isline is False else bloc.SetLines(vtkCells)
+        
     return bloc
 #_____________________________________________________________________
 
