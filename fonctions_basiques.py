@@ -770,17 +770,22 @@ def get_vtk_array_as_numpy_array(input, nom_array, copy=False, loc=None):
     si input est un vtkMultiBlockDataSet, alors les donnees sont concatenees 
     dans l'ordre des blocs croissants
     
-    nom_array peut etre coords
+    nom_array peut etre coords, pour avoir les coordonnees des points
+    nom_array peut etre centers, pour avoir les coordonnees des centres des cellules
     
-    nom_array peut etre polys (pour un vtkPolyData)
+    nom_array peut etre polys pour avoir l'arbre de connectivite (pour un vtkPolyData uniquement)
     
     Pour un maillage non-structure :
         - nom_array peut etre cells
         - nom_array peut etre cellstypes
         - nom_array peut etre cellslocations
     
+    
+    Si loc est None, alors la donnee est recherchee en priorite aux points, puis aux cellules 
+        si elle n'a pas ete trouvee aux points.
     Si loc est donnee, alors on ne cherche que aux points ou au cellules
-        'points', 'cells'
+        loc = 'points' pour chercher la donnee aux points uniquement
+        loc = <autre chose> pour chercher la donnee aux cellules uniquement
     """
     # cas multibloc
     if isinstance(input, vtk.vtkMultiBlockDataSet):
@@ -804,6 +809,8 @@ def get_vtk_array_as_numpy_array(input, nom_array, copy=False, loc=None):
     else:
         if nom_array == 'coords':
             output = numpy_support.vtk_to_numpy(input.GetPoints().GetData())
+        elif nom_array == 'centers':
+            output = get_cell_centers(input)
         elif nom_array == 'polys':
             output = numpy_support.vtk_to_numpy(input.GetPolys().GetData())
             # if output.size % 4 == 0:
