@@ -1203,7 +1203,8 @@ class LecteurFNC(ObjetPyturbo):
         # rotation du rotor pour le mettre a la bonne position
         if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None and rotation_rotor is True:
             print "Rotation du rotor autour de l'axe {1}, omega = {0} rad/s".format(self.parameters['omega'], ['x', 'y', 'z'][axe])
-            alpha = self.parameters['omega'] * self.parameters['current_time'][ind_temps] + self.parameters['init_angle']
+            alpha = self.parameters['omega'] * self.parameters['sign_rotation'] * self.parameters['current_time'][ind_temps] \
+                + self.parameters['init_angle']
             self.output.SetBlock(0, rotation(self.output.GetBlock(0), numpy.rad2deg(alpha), axe))
         
         return 0
