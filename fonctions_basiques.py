@@ -24,6 +24,7 @@ import numpy.ma as ma
 import copy
 import os, glob, sys
 
+
 #________________________________________________________________________________
 def vtk_set_input(filtre, input):
     """fonction de merde simplement pour la compatibilite
@@ -1665,7 +1666,7 @@ def ajouter_numpy_array_as_vtk_array(input, numpy_array, nom):
 #__________________________________________________________________________________________
 
 #__________________________________________________________________________________________
-def VTKThreshold(input, nom_array, valeur_min=None, valeur_max=None, loc='points'):
+def VTKThreshold(input, nom_array, valeur_min=None, valeur_max=None, loc='points', UseContinuousCellRange=False):
     """Fonction Threshold avec nom_array
     multi ou monobloc
     indiquer seulement valeur_min pour threshold by min
@@ -1693,7 +1694,7 @@ def VTKThreshold(input, nom_array, valeur_min=None, valeur_max=None, loc='points
             raise IOError, "{0} n'est pas present dans input".format(nom_array)
         select = vtk.vtkThreshold()
         select.AllScalarsOff()
-        select.UseContinuousCellRangeOn()
+        select.UseContinuousCellRangeOn() if UseContinuousCellRange else select.UseContinuousCellRangeOff()
         vtk_set_input(select, input)
         if valeur_min != None and valeur_max != None:
             select.ThresholdBetween(valeur_min, valeur_max)
