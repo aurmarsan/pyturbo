@@ -1263,18 +1263,30 @@ class LecteurSNC(ObjetPyturbo):
         self.parameters['irTlat'] = 1.0 / self.parameters['rTlat'] # weight for pressure to density
 
         # print "Rotation information"
-        self.parameters['factor_rotation_angle'] = f.variables['ref_frame_indices'][:] #-1 (rotation sign) or 0
-        self.parameters['theta0'] = f.variables['lrf_initial_angular_rotation'][:]
-        self.parameters['tmp'] = f.variables['lrf_constant_angular_vel_mag'][:]
-        self.parameters['omega'] = self.parameters['tmp'][0] / self.parameters['coeff_dt']
-        self.parameters['lrf_n_polyline_vertices'] = f.variables['lrf_n_polyline_vertices'][:]
-        self.parameters['lrf_polyline_vertices'] = f.variables['lrf_polyline_vertices'][:]
-        self.parameters['lrf_axis_origin'] = f.variables['lrf_axis_origin'][:] # origine des coordonnees pour le LRF
-        self.parameters['rotation_origin'] = self.parameters['lrf_axis_origin'][0, :] # copy and drop non necessary dimension
-        self.parameters['lrf_axis_direction'] = f.variables['lrf_axis_direction'][:]  # axe de rotation
-        self.parameters['rotation_axis'] = self.parameters['lrf_axis_direction'][0, :] # copy and drop non necessary dimension
-        self.parameters['lrf_n_points'] = f.variables['lrf_n_points'][:] # nb de points appartenant au LRF
-        self.parameters['ref_frame_indices'] = f.variables['ref_frame_indices'][:] # -1 stationnary 0 LRF
+        if 'ref_frame_indices' in f.variables:
+            self.parameters['factor_rotation_angle'] = f.variables['ref_frame_indices'][:] #-1 (rotation sign) or 0
+            self.parameters['theta0'] = f.variables['lrf_initial_angular_rotation'][:]
+            self.parameters['tmp'] = f.variables['lrf_constant_angular_vel_mag'][:]
+            self.parameters['omega'] = self.parameters['tmp'][0] / self.parameters['coeff_dt']
+            self.parameters['lrf_n_polyline_vertices'] = f.variables['lrf_n_polyline_vertices'][:]
+            self.parameters['lrf_polyline_vertices'] = f.variables['lrf_polyline_vertices'][:]
+            self.parameters['lrf_axis_origin'] = f.variables['lrf_axis_origin'][:] # origine des coordonnees pour le LRF
+            self.parameters['rotation_origin'] = self.parameters['lrf_axis_origin'][0, :] # copy and drop non necessary dimension
+            self.parameters['lrf_axis_direction'] = f.variables['lrf_axis_direction'][:]  # axe de rotation
+            self.parameters['rotation_axis'] = self.parameters['lrf_axis_direction'][0, :] # copy and drop non necessary dimension
+            self.parameters['lrf_n_points'] = f.variables['lrf_n_points'][:] # nb de points appartenant au LRF
+            self.parameters['ref_frame_indices'] = f.variables['ref_frame_indices'][:] # -1 stationnary 0 LRF
+            
+            # print "Initial phase of the mesh"
+            self.parameters['n_rot0'] = f.variables['lrf_initial_n_revolutions'][0] * numpy.pi * 2.0
+            self.parameters['alpha0'] = f.variables['lrf_initial_angular_rotation'][0] + self.parameters['n_rot0']
+            
+            self.parameters['axis_index'] = numpy.where(self.parameters['rotation_axis'])[0][0]
+            self.parameters['sign_rotation'] = self.parameters['rotation_axis'][self.parameters['axis_index']]
+            self.parameters['init_angle'] = self.parameters['alpha0'] * self.parameters['sign_rotation']
+            self.parameters['rotor-stator'] = True
+        else:
+            self.parameters['rotor-stator'] = False
         
         # Time info
         self.parameters['start_time'] = f.variables['start_time'][:]
@@ -1283,14 +1295,7 @@ class LecteurSNC(ObjetPyturbo):
         
         # Variables infos
         self.parameters['var_names'] = numpy.array(f.variables['variable_tiny_names'][:].tostring().split('\x00')[:-1])
-                
-        # print "Initial phase of the mesh"
-        self.parameters['n_rot0'] = f.variables['lrf_initial_n_revolutions'][0] * numpy.pi * 2.0
-        self.parameters['alpha0'] = f.variables['lrf_initial_angular_rotation'][0] + self.parameters['n_rot0']
         
-        self.parameters['axis_index'] = numpy.where(self.parameters['rotation_axis'])[0][0]
-        self.parameters['sign_rotation'] = self.parameters['rotation_axis'][self.parameters['axis_index']]
-        self.parameters['init_angle'] = self.parameters['alpha0'] * self.parameters['sign_rotation']
         
         # fermeture du fichier
         f.close()
@@ -1351,52 +1356,60 @@ class LecteurSNC(ObjetPyturbo):
             polys = polys, 
             nb_polys = nb_polys)
         
-        # amarsan 30 aout 2017 - modif pour surface rotor-stator
-        # indice des voxels du rotor et du stator
-        ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
-        ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
+        # decoupage dans le cas d'un cas rotor-stator
+        if self.parameters['rotor-stator'] is True:
+            # amarsan 30 aout 2017 - modif pour surface rotor-stator
+            # indice des voxels du rotor et du stator
+            ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
+            ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
+            
+            # multibloc. bloc 0 sera rotor. bloc 1 sera stator. 
+            maillage = vtk.vtkMultiBlockDataSet()
+            # ROTOR
+            if numbloc is None or numbloc == 0:
+                # amarsan - partie a remplacer quand vtkIdList.SetArray sera disponible pour pouvoir l'indiquer d'un coup avec un numpy array
+                vtkIdList = vtk.vtkIdList()
+                vtkIdList.SetNumberOfIds(ind_elm_rotor.size)
+                for k in xrange(ind_elm_rotor.size):
+                    vtkIdList.SetId(k, ind_elm_rotor[k])
+                extractor = vtkFiltersExtraction.vtkExtractCells()
+                extractor.SetInputData(surface)
+                extractor.SetCellList(vtkIdList)
+                extractor.Update()
+                surface_rotor = extractor.GetOutput()
+                surface_rotor.GetCellData().RemoveArray('vtkOriginalCellIds')
+                
+                p_surface_rotor = vtk.vtkPolyData()
+                p_surface_rotor.SetPolys(surface_rotor.GetCells())
+                p_surface_rotor.SetPoints(surface_rotor.GetPoints())
+                maillage.SetBlock(0, p_surface_rotor)
+            # STATOR
+            if numbloc is None or numbloc == 1:
+                # amarsan - partie a remplacer quand vtkIdList.SetArray sera disponible pour pouvoir l'indiquer d'un coup avec un numpy array
+                vtkIdList = vtk.vtkIdList()
+                vtkIdList.SetNumberOfIds(ind_elm_stator.size)
+                for k in xrange(ind_elm_stator.size):
+                    vtkIdList.SetId(k, ind_elm_stator[k])
+                extractor = vtkFiltersExtraction.vtkExtractCells()
+                extractor.SetInputData(surface)
+                extractor.SetCellList(vtkIdList)
+                extractor.Update()
+                surface_stator = extractor.GetOutput()
+                surface_stator.GetCellData().RemoveArray('vtkOriginalCellIds')
+                
+                p_surface_stator = vtk.vtkPolyData()
+                p_surface_stator.SetPolys(surface_stator.GetCells())
+                p_surface_stator.SetPoints(surface_stator.GetPoints())
+                maillage.SetBlock(1, p_surface_stator)
+            else:
+                maillage.SetBlock(1, None)
+            
+            # stockage dans l'objet de sortie
+            self.maillage = maillage
         
-        # puis on decoupe la surface en deux morceaux
-        maillage = vtk.vtkMultiBlockDataSet()
-        # ROTOR
-        if numbloc is None or numbloc == 0:
-            # amarsan - partie a remplacer quand vtkIdList.SetArray sera disponible pour pouvoir l'indiquer d'un coup avec un numpy array
-            vtkIdList = vtk.vtkIdList()
-            vtkIdList.SetNumberOfIds(ind_elm_rotor.size)
-            for k in xrange(ind_elm_rotor.size):
-                vtkIdList.SetId(k, ind_elm_rotor[k])
-            extractor = vtkFiltersExtraction.vtkExtractCells()
-            extractor.SetInputData(surface)
-            extractor.SetCellList(vtkIdList)
-            extractor.Update()
-            surface_rotor = extractor.GetOutput()
-            surface_rotor.GetCellData().RemoveArray('vtkOriginalCellIds')
-            
-            p_surface_rotor = vtk.vtkPolyData()
-            p_surface_rotor.SetPolys(surface_rotor.GetCells())
-            p_surface_rotor.SetPoints(surface_rotor.GetPoints())
-            maillage.SetBlock(0, p_surface_rotor)
-        # STATOR
-        if numbloc is None or numbloc == 1:
-            # amarsan - partie a remplacer quand vtkIdList.SetArray sera disponible pour pouvoir l'indiquer d'un coup avec un numpy array
-            vtkIdList = vtk.vtkIdList()
-            vtkIdList.SetNumberOfIds(ind_elm_stator.size)
-            for k in xrange(ind_elm_stator.size):
-                vtkIdList.SetId(k, ind_elm_stator[k])
-            extractor = vtkFiltersExtraction.vtkExtractCells()
-            extractor.SetInputData(surface)
-            extractor.SetCellList(vtkIdList)
-            extractor.Update()
-            surface_stator = extractor.GetOutput()
-            surface_stator.GetCellData().RemoveArray('vtkOriginalCellIds')
-            
-            p_surface_stator = vtk.vtkPolyData()
-            p_surface_stator.SetPolys(surface_stator.GetCells())
-            p_surface_stator.SetPoints(surface_stator.GetPoints())
-            maillage.SetBlock(1, p_surface_stator)
+        # cas stator seul, avec uniquement un seul referentiel. L'objet de sortie est un polydata simple. 
         else:
-            maillage.SetBlock(1, None)
-        self.maillage = maillage
+            self.maillage = surface
         
         # fermeture du fichier
         f.close()
@@ -1445,9 +1458,9 @@ class LecteurSNC(ObjetPyturbo):
             bloc 1 : stator
         """
         # initialisation de output
-        self.output = vtk_new_shallowcopy(self.maillage)
+        output = vtk_new_shallowcopy(self.maillage)
         if numbloc is not None:
-            self.output.SetBlock(0 if numbloc is 1 else 1, None)
+            output.SetBlock(0 if numbloc is 1 else 1, None)
         
         print "Ouverture {0}".format(self.file_path)
         f = netcdf.netcdf_file(self.file_path, 'r')
@@ -1455,8 +1468,26 @@ class LecteurSNC(ObjetPyturbo):
         
         # amarsan 30 aout 2017 - modif pour surface rotor-stator
         # indice des voxels du rotor et du stator
-        ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
-        ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
+        if self.parameters['rotor-stator'] is True:
+            ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
+            ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
+        
+        #####################
+        # fonction d'ajout d'une variable en faisant la distinction des cas rotor-stator et stator seul
+        def _ajouter_variable(output, data_var, var_name):
+            if self.parameters['rotor-stator'] is True:
+                if (numbloc is None or numbloc == 0) and output.GetBlock(0) is not None:
+                    output.SetBlock(0, 
+                        ajouter_numpy_array_as_vtk_array(output.GetBlock(0), data_var[ind_elm_rotor], var_name)
+                        )
+                if (numbloc is None or numbloc == 1) and output.GetBlock(1) is not None:
+                    output.SetBlock(1, 
+                        ajouter_numpy_array_as_vtk_array(output.GetBlock(1), data_var[ind_elm_stator], var_name)
+                        )
+            else:
+                output = ajouter_numpy_array_as_vtk_array(output, data_var, var_name)
+            return output
+        #####################
         
         for nom_var in self.parameters['var_names'] if noms_vars is None else noms_vars:
             if nom_var in self.parameters['var_names']:
@@ -1470,16 +1501,7 @@ class LecteurSNC(ObjetPyturbo):
                 if nom_var[0] == 'v':
                     data_var = data_var * self.parameters['coeff_vel']
                 
-                # amarsan 30 aout 2017 - modif pour surface rotor-stator
-                # self.output = ajouter_numpy_array_as_vtk_array(self.output, data_var, self.parameters['var_names'][ind_var])
-                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
-                    self.output.SetBlock(0, 
-                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_var[ind_elm_rotor], self.parameters['var_names'][ind_var])
-                        )
-                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
-                    self.output.SetBlock(1, 
-                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_var[ind_elm_stator], self.parameters['var_names'][ind_var])
-                        )
+                output = _ajouter_variable(output, data_var, self.parameters['var_names'][ind_var])
         
         # On derive la pression ou la densite l'un a partir de celui qui est disponible
         if noms_vars is None or 'p' in noms_vars or 'rho' in noms_vars:
@@ -1488,78 +1510,41 @@ class LecteurSNC(ObjetPyturbo):
                 ind_var_p = int(numpy.where(self.parameters['var_names'] == 'p')[0])
                 data_p = numpy.asarray(f.variables['measurements'][ind_temps, ind_var_p]).ravel() 
                 data_var = data_p * self.parameters['irTlat'] * self.parameters['coeff_density']
-                
-                # amarsan 30 aout 2017 - modif pour surface rotor-stator
-                # self.output = ajouter_numpy_array_as_vtk_array(self.output, data_rho, 'rho')
-                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
-                    self.output.SetBlock(0, 
-                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_var[ind_elm_rotor], 'rho')
-                        )
-                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
-                    self.output.SetBlock(1, 
-                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_var[ind_elm_stator], 'rho')
-                        )
+                output = _ajouter_variable(output, data_var, 'rho')
             
             if 'rho' in self.parameters['var_names']:
                 print 'Calcul de p a partir de rho'
                 ind_var_rho = int(numpy.where(self.parameters['var_names'] == 'rho')[0])
                 data_rho = numpy.asarray(f.variables['measurements'][ind_temps, ind_var_rho]).ravel() 
                 data_var = (data_rho * self.parameters['rTlat'] + self.parameters['offset_pressure']) * self.parameters['coeff_press']
-                # amarsan 30 aout 2017
-                # self.output = ajouter_numpy_array_as_vtk_array(self.output, data_var, 'p')
-                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
-                    self.output.SetBlock(0, 
-                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_var[ind_elm_rotor], 'p')
-                        )
-                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
-                    self.output.SetBlock(1, 
-                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_var[ind_elm_stator], 'p')
-                        )
+                output = _ajouter_variable(output, data_var, 'p')
         
         # on ajoute les face id si demande
         if ajouter_faces_id is True:
             print 'Ajout des faces id'
             data_var = f.variables['face'][:]
-            if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
-                self.output.SetBlock(0, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_var[ind_elm_rotor], 'face_id')
-                    )
-            if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
-                self.output.SetBlock(1, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_var[ind_elm_stator], 'face_id')
-                    )
+            output = _ajouter_variable(output, data_var, 'face_id')
         
         # on ajoute les normales si demande
         if ajouter_normales is True:
             print 'Ajout des normales'
             data_var = f.variables['surfel_normal'][:]
-            if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
-                self.output.SetBlock(0, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_var[ind_elm_rotor], 'surfel_normals')
-                    )
-            if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
-                self.output.SetBlock(1, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_var[ind_elm_stator], 'surfel_normals')
-                    )
+            output = _ajouter_variable(output, data_var, 'surfel_normals')
         
         # on ajoute les surfaces si demande
         if ajouter_surfaces is True:
             print 'Ajout des surfaces'
             data_var = f.variables['surfel_area'][:]
-            if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
-                self.output.SetBlock(0, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_var[ind_elm_rotor], 'surfel_area')
-                    )
-            if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
-                self.output.SetBlock(1, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_var[ind_elm_stator], 'surfel_area')
-                    )
+            output = _ajouter_variable(output, data_var, 'surfel_area')
         
-        if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None and rotation_rotor is True:
-            print "Rotation du rotor autour de l'axe z, omega = {0} rad/s".format(self.parameters['omega'])
-            alpha = self.parameters['omega'] * self.parameters['current_time'][ind_temps] + self.parameters['init_angle']
-            self.output.SetBlock(0, rotation(self.output.GetBlock(0), numpy.rad2deg(alpha), axe))
+        # rotation du rotor pour correspondre a l'instant demande
+        if self.parameters['rotor-stator'] is True:
+            if (numbloc is None or numbloc == 0) and output.GetBlock(0) is not None and rotation_rotor is True:
+                print "Rotation du rotor autour de l'axe z, omega = {0} rad/s".format(self.parameters['omega'])
+                alpha = self.parameters['omega'] * self.parameters['current_time'][ind_temps] + self.parameters['init_angle']
+                output.SetBlock(0, rotation(output.GetBlock(0), numpy.rad2deg(alpha), axe))
         
+        self.output = output
         return 0
     #_________________________________________________________________
     
