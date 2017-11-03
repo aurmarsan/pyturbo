@@ -1674,7 +1674,18 @@ def VTKThreshold(input, nom_array, valeur_min=None, valeur_max=None, loc='points
     indiquer les deux pour threshold between
     
     loc = 'points', sinon on utilise les donnees aux cellules
+    
+    amarsan complement 03 novembre 2017
+    modification de la fonction pour pouvoir clipper avec une coordonnee
+    'coordsX', 'coordsY', 'coordsZ'
     """
+    # dans le cas ou on veut Threshold avce une coordonnee spatiale, on ajoute d'abord cette coordonnee spatiale aux points
+    if nom_array[:6] == 'coords':
+        coords = p.get_vtk_array_as_numpy_array(input, nom_array)
+        input = p.ajouter_numpy_array_as_vtk_array(input, 
+            coords[:, {'coordsX': 0, 'coordsY': 1, 'coordsZ': 2}[nom_array]], 
+            nom_array)
+    
     #cas multibloc
     if isinstance(input, vtk.vtkMultiBlockDataSet):
         output = vtk_new_instance(input)
@@ -1710,6 +1721,21 @@ def VTKThreshold(input, nom_array, valeur_min=None, valeur_max=None, loc='points
         
     return output
 #__________________________________________________________________________________________
+
+#__________________________________________________________________________________________
+def VTKBoxClip(input, xmin, xmax, ymin, ymax, zmin, zmax):
+    """ clip avec une boite. 
+    """
+    print 'Fonction extremement lente, je ne sais pas pourquoi. (amarsan 3 novembre 2017)'
+    if 0:
+        clipper =  vtk.vtkBoxClipDataSet()
+        vtk_set_input(clipper, input)
+        clipper.SetBoxClip(xmin, xmax, ymin, ymax, zmin, zmax)
+        clipper.Update()
+        return clipper.GetClippedOutput()
+    return None
+#__________________________________________________________________________________________
+
 
 #__________________________________________________________________________________________
 def VTKSubset(input, i_gardes = None, j_gardes = None, k_gardes = None):
