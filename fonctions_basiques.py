@@ -585,6 +585,8 @@ def VTKProbe(input, source, tolerance=None):
             #print nom_array
             output.GetPointData().AddArray(
                 filtre.GetOutput().GetPointData().GetArray(nom_array))
+    if numpy.max(get_vtk_array_as_numpy_array(output, 'vtkValidPointMask')) > 1:
+        print 'ATTENTION ATTENTION ATTENTION : verifier le resultat. La sonde intersecte plusieurs domaines.'
     return output
 #_____________________________________________________________________________________
 
@@ -1681,8 +1683,9 @@ def VTKThreshold(input, nom_array, valeur_min=None, valeur_max=None, loc='points
     """
     # dans le cas ou on veut Threshold avce une coordonnee spatiale, on ajoute d'abord cette coordonnee spatiale aux points
     if nom_array[:6] == 'coords':
-        coords = p.get_vtk_array_as_numpy_array(input, nom_array)
-        input = p.ajouter_numpy_array_as_vtk_array(input, 
+        print 'ajout de la coordonnee {0} aux points'.format(nom_array)
+        coords = get_vtk_array_as_numpy_array(input, 'coords')
+        input = ajouter_numpy_array_as_vtk_array(input, 
             coords[:, {'coordsX': 0, 'coordsY': 1, 'coordsZ': 2}[nom_array]], 
             nom_array)
     
