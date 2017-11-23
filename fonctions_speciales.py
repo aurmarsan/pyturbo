@@ -825,3 +825,25 @@ def extruder(input, longueur, nb_step=None):
     
     #return output
 ##____________________________________________________________________________
+
+#__________________________________________________________________________________________
+def read_fig(filename):
+    """ Fonction de lecture des donnees contenues dans une figure MATLAB .fig
+    """
+    output = {}
+    d = loadmat(filename, squeeze_me=True, struct_as_record=False)
+    matfig = d['hgS_070000']
+    childs = matfig.children
+    ax1 = [c for c in childs if c.type == 'axes'][0]
+    for line in ax1.children:
+        try:
+            if line.type == 'graph2d.lineseries':
+                x = line.properties.XData
+                y = line.properties.YData
+                leg = line.properties.DisplayName
+                print leg
+                output[leg] = numpy.column_stack((x, y))
+        except:
+            print 'One children is ignored...'
+    return output
+#__________________________________________________________________________________________
