@@ -1509,7 +1509,8 @@ class LecteurSNC(ObjetPyturbo):
     #_________________________________________________________________
     
     #_________________________________________________________________
-    def lire_datas(self, ind_temps, noms_vars=None, numbloc=None, rotation_rotor=True, axe=2):
+    def lire_datas(self, ind_temps, noms_vars=None, numbloc=None, rotation_rotor=True, axe=2,
+        ajouter_faces_id=True, ajouter_normales=True, ajouter_surfaces=False):
         """ Lecture des datas au temps indique par ind_time
                 - ind_temps est donne l'index du temps a lire
                 - noms_vars est une liste des variables a lire. Si elle est None, toutes les variables disponibles sont lues
@@ -1564,6 +1565,24 @@ class LecteurSNC(ObjetPyturbo):
                 alpha = self.parameters['omega'] * self.parameters['sign_rotation'] * self.parameters['current_time'][ind_temps] \
                     + self.parameters['init_angle']
                 output.SetBlock(0, rotation(output.GetBlock(0), numpy.rad2deg(alpha), axe))
+        
+        # on ajoute les face id si demande
+        if ajouter_faces_id is True:
+            print 'Ajout des faces id'
+            data_var = f.variables['face'][:]
+            output = self._ajouter_variable(output, data_var, 'face_id', numbloc)
+        
+        # on ajoute les normales si demande
+        if ajouter_normales is True:
+            print 'Ajout des normales'
+            data_var = f.variables['surfel_normal'][:]
+            output = self._ajouter_variable(output, data_var, 'surfel_normals', numbloc)
+        
+        # on ajoute les surfaces si demande
+        if ajouter_surfaces is True:
+            print 'Ajout des surfaces'
+            data_var = f.variables['surfel_area'][:]
+            output = self._ajouter_variable(output, data_var, 'surfel_area', numbloc)
         
         self.output = output
         return 0
