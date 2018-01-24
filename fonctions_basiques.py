@@ -1079,44 +1079,14 @@ def rotation(input, alpha, axe=2):
         transformFilter.Update()
         output = transformFilter.GetOutput()
         
+        # rotation des vecteurs aux points
         NomsVecteurs = []
         for i in range(input.GetPointData().GetNumberOfArrays()):
             if input.GetPointData().GetArray(i).GetNumberOfComponents() == 3:
                 NomsVecteurs.append(input.GetPointData().GetArrayName(i))
-        
-        t2 = time()
-        # liste_calculateurs = []
         for vect in NomsVecteurs:
-            # calculator = vtk.vtkArrayCalculator()
-            # liste_calculateurs.append(calculator)
-            # 
-            # calculator.SetResultArrayType(vtk.VTK_FLOAT) # 2014.02.14: on force la sortie a etre un float. Sinon ca devient un VTK_DOUBLE et le streamtracer ne fonctionne pas. 
-            # #calculator.SetInputData(output)
-            # if len(liste_calculateurs) == 1:
-                # vtk_set_input(calculator, output)
-            # else:
-                # calculator.SetInputConnection(liste_calculateurs[-2].GetOutputPort())
-            # calculator.AddScalarVariable(vect + "_X", vect, 0)
-            # calculator.AddScalarVariable(vect + "_Y", vect, 1)
-            # calculator.AddScalarVariable(vect + "_Z", vect, 2)
-            # calculator.SetResultArrayName(vect)
-            # if axe == 0:
-                # calculator.SetFunction('({0}_X)*iHat + (({0}_Y)*cos({1})-({0}_Z)*sin({1}))*jHat + (({0}_Z)*cos({1}) + ({0}_Y)*sin({1}))*kHat'\
-                    # .format(vect, alpha * numpy.pi / 180.))
-            # elif axe == 1:
-                # calculator.SetFunction('({0}_Y)*jHat + (({0}_Z)*cos({1})-({0}_X)*sin({1}))*kHat + (({0}_X)*cos({1}) + ({0}_Z)*sin({1}))*iHat'\
-                    # .format(vect, alpha * numpy.pi / 180.))
-            # elif axe == 2:
-                # calculator.SetFunction('({0}_Z)*kHat + (({0}_X)*cos({1})-({0}_Y)*sin({1}))*iHat + (({0}_Y)*cos({1}) + ({0}_X)*sin({1}))*jHat'\
-                    # .format(vect, alpha * numpy.pi / 180.))
-            # else:
-                # raise IOError, "gni -- moi pas comprendre l'axe de rotation"
-        # if len(liste_calculateurs) > 0:
-            # calculator = liste_calculateurs[-1]
-            # calculator.Update()
-            # output = vtk_new_shallowcopy(calculator.GetOutput())
             print 'rotation du vecteur ', vect
-            narray = get_vtk_array_as_numpy_array(output, vect)
+            narray = get_vtk_array_as_numpy_array(output, vect, loc='points')
             narray_new = numpy.ones(narray.shape)
             alpha_rad = numpy.deg2rad(alpha)
             if axe == 0:
@@ -1134,9 +1104,32 @@ def rotation(input, alpha, axe=2):
             else:
                 raise IOError, "gni -- moi pas comprendre l'axe de rotation"
             output = ajouter_numpy_array_as_vtk_array(output, narray_new, vect)
-        t3 = time()
-        # print t2 - t1
-        # print t3 - t2
+        
+        # rotation des vecteurs aux cellules
+        NomsVecteurs = []
+        for i in range(input.GetCellData().GetNumberOfArrays()):
+            if input.GetCellData().GetArray(i).GetNumberOfComponents() == 3:
+                NomsVecteurs.append(input.GetCellData().GetArrayName(i))
+        for vect in NomsVecteurs:
+            print 'rotation du vecteur ', vect
+            narray = get_vtk_array_as_numpy_array(output, vect, loc='cells')
+            narray_new = numpy.ones(narray.shape)
+            alpha_rad = numpy.deg2rad(alpha)
+            if axe == 0:
+                narray_new[:, 0] = (narray[:, 0])
+                narray_new[:, 1] = ((narray[:, 1]) * numpy.cos(alpha_rad)-(narray[:, 2]) * numpy.sin(alpha_rad))
+                narray_new[:, 2] = ((narray[:, 2]) * numpy.cos(alpha_rad) + (narray[:, 1]) * numpy.sin(alpha_rad))
+            elif axe == 1:
+                narray_new[:, 1] = (narray[:, 1])
+                narray_new[:, 2] = ((narray[:, 2]) * numpy.cos(alpha_rad)-(narray[:, 0]) * numpy.sin(alpha_rad))
+                narray_new[:, 0] = ((narray[:, 0]) * numpy.cos(alpha_rad) + (narray[:, 2]) * numpy.sin(alpha_rad))
+            elif axe == 2:
+                narray_new[:, 2] = (narray[:, 2])
+                narray_new[:, 0] = ((narray[:, 0]) * numpy.cos(alpha_rad)-(narray[:, 1]) * numpy.sin(alpha_rad))
+                narray_new[:, 1] = ((narray[:, 1]) * numpy.cos(alpha_rad) + (narray[:, 0]) * numpy.sin(alpha_rad))
+            else:
+                raise IOError, "gni -- moi pas comprendre l'axe de rotation"
+            output = ajouter_numpy_array_as_vtk_array(output, narray_new, vect)
         
         return output
 #_____________________________________________________________________________________

@@ -528,9 +528,9 @@ class CalculettePyturbo(ObjetPyturbo):
     #_____________________________________________________________________________________
     
     #_____________________________________________________________________________________
-    def SimilarInstance(self):
+    def SimilarInstance(self, nom_resultat=None):
         """cree une instance similaire
-        ne copie par nom_resultat
+        ne copie pas nom_resultat
         """
         newCalculator = CalculettePyturbo()
         for arg in dir(self):
@@ -538,7 +538,7 @@ class CalculettePyturbo(ObjetPyturbo):
                     and arg != 'input' and arg != 'output':
                 setattr(newCalculator, arg, getattr(self, arg))
         newCalculator.set('input', self.input)
-        newCalculator.set('nom_resultat', None)
+        newCalculator.set('nom_resultat', nom_resultat)
         return newCalculator
     #_____________________________________________________________________________________
     
@@ -550,9 +550,10 @@ class CalculettePyturbo(ObjetPyturbo):
         # traitement recursif du cas multibloc
         if isinstance(self.output, vtk.vtkMultiBlockDataSet):
             for numbloc in get_numeros_blocs_non_vides(self.input):
-                calc_bloc = self.SimilarInstance()
+                calc_bloc = self.SimilarInstance(nom_resultat = self.nom_resultat)
                 calc_bloc.input = self.input.GetBlock(numbloc)
                 self.output.SetBlock(numbloc, calc_bloc.get_output())
+                
             self._mettre_a_jour = False
             return 0
         
@@ -681,7 +682,10 @@ class CalculettePyturbo(ObjetPyturbo):
             for k in range(len(self.a_calculer)):
                 avant = self.a_calculer[k]
                 apres = self.nom_resultat[k]
-                self.output.GetPointData().GetArray(avant).SetName(apres)
+                if self.use_cell_data is False:
+                    self.output.GetPointData().GetArray(avant).SetName(apres)
+                else:
+                    self.output.GetCellData().GetArray(avant).SetName(apres)
             
         self._mettre_a_jour = False
         return 0
