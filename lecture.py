@@ -1000,10 +1000,14 @@ class LecteurFNC(ObjetPyturbo):
         """ affiche les informations temporelles du fichier fnc
         les parametres du fichier FNC doivent avoir ete lus avant en utilisant la fonction self.read_parameters()
         """
-        print 'Pas de temps : ', self.parameters['dt']
         print 'Indices temporels min : ', self.parameters['start_time']
         print 'Indices temporels max : ', self.parameters['end_time']
         print 'Temps moyens [s] : ', self.parameters['current_time']
+        if self.parameters['current_time'].size > 1:
+            print 'Pas de temps : {0} -- ({1} [Hz])'.format(
+                self.parameters['current_time'][1] - self.parameters['current_time'][0], 
+                1. / (self.parameters['current_time'][1] - self.parameters['current_time'][0])
+                )
         print 'Nombre de pas de temps : ', self.parameters['current_time'].size
         return 0
     #_________________________________________________________________
@@ -1233,6 +1237,165 @@ class LecteurFNC(ObjetPyturbo):
 #__________________________________________________________________________________________
 
 #__________________________________________________________________________________________
+class LecteurPFNC(ObjetPyturbo):
+    """lecture d'un fichier au format FNC (powerflow)
+    pour l'instant adapte seulement aux HEX
+    """
+    #_________________________________________________________________
+    def __init__(self, file_path=None):
+        attributs = locals().copy()
+        del attributs['self']
+        # initialisation de la classe parente
+        ObjetPyturbo.__init__(self, **attributs)
+        # initialisation du dictionnaire des parametres
+        self.parameters = None
+        
+    #_________________________________________________________________
+
+    #_________________________________________________________________
+    def lire_parametres(self):
+        print "Ouverture {0}".format(self.file_path)
+        f = netcdf.netcdf_file(self.file_path, 'r')
+        
+        self.parameters = {}
+        # print "Offsets and scales"
+        self.parameters['lx_offsets'] = f.variables['lx_offsets'][:]
+        self.parameters['lx_scales'] = f.variables['lx_scales'][:]
+        self.parameters['offset_coords'] = f.variables['csys'][0, 0:3, 3]
+
+        # print "Scaling factors"
+        self.parameters['coeff_dx'] = f.variables['lx_scales'][0]
+        self.parameters['CFL_number'] = f.variables['lx_scales'][-1]
+        self.parameters['coeff_dt'] = f.variables['lx_scales'][0] / f.variables['lx_scales'][3]
+        self.parameters['dt'] = self.parameters['CFL_number'] * self.parameters['coeff_dt'] 
+        self.parameters['coeff_press'] = f.variables['lx_scales'][1] * f.variables['lx_scales'][3]**2
+        self.parameters['coeff_vel'] = f.variables['lx_scales'][3]
+        self.parameters['coeff_density'] = f.variables['lx_scales'][1]
+        self.parameters['offset_pressure'] = f.variables['lx_offsets'][4]
+
+        # print "weight factor"
+        self.parameters['t_lat'] = 1.0 / 3.0 # lattive temperature
+        self.parameters['r_lat'] = 1.0 # lattice r_gas constant
+        self.parameters['rTlat'] = self.parameters['r_lat'] * self.parameters['t_lat'] # weight for density to pressure
+        self.parameters['irTlat'] = 1.0 / self.parameters['rTlat'] # weight for pressure to density
+
+        # print "Rotation information"
+        self.parameters['factor_rotation_angle'] = f.variables['ref_frame_indices'][:] #-1 (rotation sign) or 0
+        self.parameters['theta0'] = f.variables['lrf_initial_angular_rotation'][:]
+        self.parameters['tmp'] = f.variables['lrf_constant_angular_vel_mag'][:]
+        self.parameters['omega'] = self.parameters['tmp'][0] / self.parameters['coeff_dt']
+        self.parameters['lrf_n_polyline_vertices'] = f.variables['lrf_n_polyline_vertices'][:]
+        self.parameters['lrf_polyline_vertices'] = f.variables['lrf_polyline_vertices'][:]
+        self.parameters['lrf_axis_origin'] = f.variables['lrf_axis_origin'][:] # origine des coordonnees pour le LRF
+        self.parameters['rotation_origin'] = self.parameters['lrf_axis_origin'][0, :] # copy and drop non necessary dimension
+        self.parameters['lrf_axis_direction'] = f.variables['lrf_axis_direction'][:]  # axe de rotation
+        self.parameters['rotation_axis'] = self.parameters['lrf_axis_direction'][0, :] # copy and drop non necessary dimension
+        self.parameters['lrf_n_points'] = f.variables['lrf_n_points'][:] # nb de points appartenant au LRF
+        self.parameters['ref_frame_indices'] = f.variables['ref_frame_indices'][:] # -1 stationnary 0 LRF
+        
+        # Time info
+        self.parameters['start_time'] = f.variables['start_time'][:]
+        self.parameters['end_time'] = f.variables['end_time'][:]
+        self.parameters['current_time'] = 0.5 * (f.variables['start_time'][:] + f.variables['end_time'][:]) * self.parameters['dt']
+        
+        # Variables infos
+        self.parameters['var_names'] = numpy.array(f.variables['variable_tiny_names'][:].tostring().split('\x00')[:-1])
+                
+        # print "Initial phase of the mesh"
+        self.parameters['n_rot0'] = f.variables['lrf_initial_n_revolutions'][0] * numpy.pi * 2.0
+        self.parameters['alpha0'] = f.variables['lrf_initial_angular_rotation'][0] + self.parameters['n_rot0']
+        
+        self.parameters['axis_index'] = numpy.where(self.parameters['rotation_axis'])[0][0]
+        self.parameters['sign_rotation'] = self.parameters['rotation_axis'][self.parameters['axis_index']]
+        self.parameters['init_angle'] = self.parameters['alpha0'] * self.parameters['sign_rotation']
+        
+        # fermeture du fichier
+        f.close()
+        return 0
+    #_________________________________________________________________
+    
+    #_________________________________________________________________
+    def get_infos_temporelles(self):
+        """ affiche les informations temporelles du fichier fnc
+        les parametres du fichier FNC doivent avoir ete lus avant en utilisant la fonction self.read_parameters()
+        """
+        print 'Indices temporels min : ', self.parameters['start_time']
+        print 'Indices temporels max : ', self.parameters['end_time']
+        print 'Temps moyens [s] : ', self.parameters['current_time']
+        print 'Pas de temps : {0} -- ({1} [Hz])'.format(
+            self.parameters['current_time'][1] - self.parameters['current_time'][0], 
+            1. / (self.parameters['current_time'][1] - self.parameters['current_time'][0])
+            )
+        print 'Nombre de pas de temps : ', self.parameters['current_time'].size
+        return 0
+    #_________________________________________________________________
+    
+    #_________________________________________________________________
+    def get_infos_variables(self):
+        """Retourne les informations sur les variables disponibles
+        """
+        print 'Variables disponibles : ', self.parameters['var_names']
+        return 0
+    #_________________________________________________________________
+    
+    #_________________________________________________________________
+    def lire_datas(self, noms_vars=None):
+        """ Lecture des datas au point
+            - noms_vars est une liste des variables a lire. Si elle est None, toutes les variables disponibles sont lues
+        """
+        print "Ouverture {0}".format(self.file_path)
+        f = netcdf.netcdf_file(self.file_path, 'r')
+        print "reading variable data"
+        
+        # initialisation du dictionnaire output qui va contenir les coordonnees et les donnees
+        self.output = {}
+        self.output['coords'] = (f.variables['coords'][:] + f.variables['csys'][0, 0:3, 3]) * f.variables['lx_scales'][0]
+        
+        # lecture des donnees
+        for nom_var in self.parameters['var_names'] if noms_vars is None else noms_vars:
+            if nom_var in self.parameters['var_names']:
+                print "Chargement et redimensionnement de {0}".format(nom_var)
+                ind_var = int(numpy.where(self.parameters['var_names'] == nom_var)[0])
+                data_var = numpy.array(f.variables['measurements'][:, ind_var]).ravel()
+                
+                # redimensionnement
+                if nom_var is 'p':
+                    data_var = (data_var + self.parameters['offset_pressure']) * self.parameters['coeff_press']
+                if nom_var[0] == 'v':
+                    data_var = data_var * self.parameters['coeff_vel']
+                
+                # stockage
+                self.output[self.parameters['var_names'][ind_var]] = data_var
+        
+        # Si nom_vars est none, on derive la pression ou la densite l'un a partir de celui qui est disponible
+        if noms_vars is None or 'p' in noms_vars or 'rho' in noms_vars:
+            if 'p' in self.parameters['var_names']:
+                print 'Calcul de rho a partir de p'
+                ind_var_p = int(numpy.where(self.parameters['var_names'] == 'p')[0])
+                data_p = numpy.array(f.variables['measurements'][:, ind_var_p]).ravel() 
+                data_rho = data_p * self.parameters['irTlat'] * self.parameters['coeff_density']
+                self.output['rho'] = data_rho
+
+            if 'rho' in self.parameters['var_names']:
+                print 'Calcul de p a partir de rho'
+                ind_var_rho = int(numpy.where(self.parameters['var_names'] == 'rho')[0])
+                data_rho = numpy.array(f.variables['measurements'][:, ind_var_rho]).ravel() 
+                data_p = (data_rho * self.parameters['rTlat'] + self.parameters['offset_pressure']) * self.parameters['coeff_press']
+                self.output['p'] = data_p
+
+        return 0
+    #_________________________________________________________________
+    
+    #_________________________________________________________________
+    def get_output(self):
+        """retourne le resultat de la lecture
+        
+        """
+        return self.output
+    #_________________________________________________________________
+#__________________________________________________________________________________________
+
+#__________________________________________________________________________________________
 class LecteurSNC(ObjetPyturbo):
     """lecture d'un fichier au format FNC (powerflow)
     pour l'instant adapte seulement aux HEX
@@ -1328,10 +1491,14 @@ class LecteurSNC(ObjetPyturbo):
         """ affiche les informations temporelles du fichier fnc
         les parametres du fichier FNC doivent avoir ete lus avant en utilisant la fonction self.read_parameters()
         """
-        print 'Pas de temps : ', self.parameters['dt']
         print 'Indices temporels min : ', self.parameters['start_time']
         print 'Indices temporels max : ', self.parameters['end_time']
         print 'Temps moyens [s] : ', self.parameters['current_time']
+        if self.parameters['current_time'].size > 1:
+            print 'Pas de temps : {0} -- ({1} [Hz])'.format(
+                self.parameters['current_time'][1] - self.parameters['current_time'][0], 
+                1. / (self.parameters['current_time'][1] - self.parameters['current_time'][0])
+                )
         print 'Nombre de pas de temps : ', self.parameters['current_time'].size
         return 0
     #_________________________________________________________________
