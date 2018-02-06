@@ -22,7 +22,7 @@ import struct
 import numpy
 import numpy.ma as ma
 import copy
-import os, glob, sys
+import os, glob, sys, time
 
 
 #________________________________________________________________________________
@@ -504,6 +504,7 @@ def VTKProbe(input, source, tolerance=None):
     tolerance permet de faire des trucs. Essayer des valeurs, 0.1 par exemple. 
     Voir la doc du vtkProbeFilter. 
     """
+    balise = time.time()
     if isinstance(input, vtk.vtkMultiBlockDataSet):
         output = vtk.vtkMultiBlockDataSet()
         for numbloc in get_numeros_blocs_non_vides(input):
@@ -587,6 +588,7 @@ def VTKProbe(input, source, tolerance=None):
                 filtre.GetOutput().GetPointData().GetArray(nom_array))
     if numpy.max(get_vtk_array_as_numpy_array(output, 'vtkValidPointMask')) > 1:
         print 'ATTENTION ATTENTION ATTENTION : verifier le resultat. La sonde intersecte plusieurs domaines.'
+    print '[PERFORMANCE] Operation de VTKProbe faite en {0} secondes'.format(time.time() - balise)
     return output
 #_____________________________________________________________________________________
 
