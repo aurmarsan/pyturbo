@@ -1480,6 +1480,17 @@ def convertir_en_polydata(input, calculer_vecteur_normal=True):
 #__________________________________________________________________________________________
 
 #__________________________________________________________________________________________
+def merge_blocs(liste_blocs, merge_points=True):
+    """fonction qui permet de merger des blocs ensemble
+    """
+    m = vtk.vtkMultiBlockDataSet()
+    for k in range(len(liste_blocs)):
+        m.SetBlock(k, liste_blocs[k])
+    output = merge_multibloc(m)
+    return output
+#__________________________________________________________________________________________
+
+#__________________________________________________________________________________________
 def merge_multibloc(multibloc, merge_points=True):
     """fonction de conversion d'une multibloc en polydata
     avec fusion des blocs si multibloc est un multiblock
