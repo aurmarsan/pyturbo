@@ -3,6 +3,7 @@ import struct
 import glob
 import sys
 from scipy.io import netcdf
+import multiprocessing
 
 
 try: 
@@ -1021,104 +1022,111 @@ class LecteurFNC(ObjetPyturbo):
     #_________________________________________________________________
     
     #_________________________________________________________________
-    def lire_maillage(self):
+    def lire_maillage(self, nb_tasks = None, nb_procs = 2):
         """ Lecture de la geometrie. self.maillage est un multibloc. 
         Block 0 = rotor
         Block 1 = stator
+        
+        nb_tasks permet de diviser les blocs rotor et stator en plusieurs blocs
+        si nb_tasks is not None, alors on le fait en parallele en utilisant multiprocessing Pool
         """
         print "Ouverture {0}".format(self.file_path)
         f = netcdf.netcdf_file(self.file_path, 'r')
         
-        print 'Chargement de la geometrie'
-        # read coordinates
-        element_coords = f.variables['coords']
-        voxel_scales = f.variables['voxel_scales']
-        nelm = element_coords.shape[0]
-        ndims = element_coords.shape[1]
+        # TRAITEMENT MONOTACHE
+        if nb_tasks is None or nb_tasks == 1:
+            print 'Chargement de la geometrie'
+            # read coordinates
+            element_coords = f.variables['coords']
+            voxel_scales = f.variables['voxel_scales']
+            nelm = element_coords.shape[0]
+            ndims = element_coords.shape[1]
+            
+            # "Spatial offset"
+            # element_coords[:, :] =  element_coords[:, :] + self.parameters['offset_coords'][None, :]
+            element_coords =  element_coords[:, :] + f.variables['csys'][0, 0:3, 3]
+            
+            # voxel size
+            dx = 2**(1.0 + voxel_scales[:])
+            
+            ########## ROTOR ##########
+            print 'traitement rotor'
+            ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
         
-        # "Spatial offset"
-        # element_coords[:, :] =  element_coords[:, :] + self.parameters['offset_coords'][None, :]
-        element_coords =  element_coords[:, :] + f.variables['csys'][0, 0:3, 3]
+            # compute voxels vertices coordinates
+            vertices_coords = numpy.zeros((ind_elm_rotor.size, 8, ndims))
+            vertices_coords[:, 0, :] = element_coords[ind_elm_rotor, :]
+            vertices_coords[:, 1, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 0, 0])[None, :]
+            vertices_coords[:, 2, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 1, 0])[None, :]
+            vertices_coords[:, 3, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([0, 1, 0])[None, :]
+            vertices_coords[:, 4, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([0, 0, 1])[None, :]
+            vertices_coords[:, 5, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 0, 1])[None, :]
+            vertices_coords[:, 6, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 1, 1])[None, :]
+            vertices_coords[:, 7, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([0, 1, 1])[None, :]
+            vertices_coords = vertices_coords.reshape((-1, 3))
+            
+            # remove duplicated vertices and get associated tree connectivity
+            coords_view_rotor = numpy.ascontiguousarray(vertices_coords).view(
+                numpy.dtype((numpy.void, vertices_coords.dtype.itemsize * 3)))
+            _, idx_rotor, inv_rotor = numpy.unique(coords_view_rotor, return_index=True, return_inverse=True)
+            
+            # unique_vertices_coords = vertices_coords[idx] * self.parameters['coeff_dx']
+            unique_vertices_coords_rotor = vertices_coords[idx_rotor] * f.variables['lx_scales'][0]
+            connectivity_rotor = numpy.arange(ind_elm_rotor.size * 8).reshape((ind_elm_rotor.size, 8))
+            connectivity_rotor = inv_rotor[connectivity_rotor]
+            connectivity_rotor = numpy.concatenate(
+                ((8 * numpy.ones(connectivity_rotor.shape[0], dtype=numpy.int))[:, None], connectivity_rotor), 
+                axis = -1)
+            
+            # VTK rotor
+            vtk_rotor = create_bloc_non_structure_from_numpy_array(
+                coords = unique_vertices_coords_rotor, 
+                cells = connectivity_rotor.ravel(), 
+                cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_rotor.shape[0]), 
+                cellslocations = numpy.arange(connectivity_rotor.shape[0]) * 9)
+            del vertices_coords
         
-        # voxel size
-        dx = 2**(1.0 + voxel_scales[:])
+            ########## STATOR ###########
+            print 'traitement stator'
+            ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
+            
+            # compute voxels vertices coordinates
+            vertices_coords = numpy.zeros((ind_elm_stator.size, 8, ndims))
+            vertices_coords[:, 0, :] = element_coords[ind_elm_stator, :]
+            vertices_coords[:, 1, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 0, 0])[None, :]
+            vertices_coords[:, 2, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 1, 0])[None, :]
+            vertices_coords[:, 3, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([0, 1, 0])[None, :]
+            vertices_coords[:, 4, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([0, 0, 1])[None, :]
+            vertices_coords[:, 5, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 0, 1])[None, :]
+            vertices_coords[:, 6, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 1, 1])[None, :]
+            vertices_coords[:, 7, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([0, 1, 1])[None, :]
+            vertices_coords = vertices_coords.reshape((-1, 3))
+            
+            # remove duplicated vertices and get associated tree connectivity
+            coords_view_stator = numpy.ascontiguousarray(vertices_coords).view(
+                numpy.dtype((numpy.void, vertices_coords.dtype.itemsize * 3)))
+            _, idx_stator, inv_stator = numpy.unique(coords_view_stator, return_index=True, return_inverse=True)
+            
+            # unique_vertices_coords = vertices_coords[idx] * self.parameters['coeff_dx']
+            unique_vertices_coords_stator = vertices_coords[idx_stator] * f.variables['lx_scales'][0]
+            connectivity_stator = numpy.arange(ind_elm_stator.size * 8).reshape((ind_elm_stator.size, 8))
+            connectivity_stator = inv_stator[connectivity_stator]
+            connectivity_stator = numpy.concatenate(
+                ((8 * numpy.ones(connectivity_stator.shape[0], dtype=numpy.int))[:, None], connectivity_stator), 
+                axis = -1)
+            
+            # VTK stator
+            vtk_stator = create_bloc_non_structure_from_numpy_array(
+                coords = unique_vertices_coords_stator, 
+                cells = connectivity_stator.ravel(), 
+                cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_stator.shape[0]), 
+                cellslocations = numpy.arange(connectivity_stator.shape[0]) * 9)
+            del vertices_coords
         
-        ###################
-        # CREATE_ROTOR
-        print 'traitement rotor'
-        # ind_elm_rotor = numpy.where(self.parameters['ref_frame_indices'] == 0)[0]
-        ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
-        # compute voxels vertices coordinates
-        vertices_coords = numpy.zeros((ind_elm_rotor.size, 8, ndims))
-        vertices_coords[:, 0, :] = element_coords[ind_elm_rotor, :]
-        vertices_coords[:, 1, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 0, 0])[None, :]
-        vertices_coords[:, 2, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 1, 0])[None, :]
-        vertices_coords[:, 3, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([0, 1, 0])[None, :]
-        vertices_coords[:, 4, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([0, 0, 1])[None, :]
-        vertices_coords[:, 5, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 0, 1])[None, :]
-        vertices_coords[:, 6, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([1, 1, 1])[None, :]
-        vertices_coords[:, 7, :] = element_coords[ind_elm_rotor, :] + dx[ind_elm_rotor, None] * numpy.array([0, 1, 1])[None, :]
-        vertices_coords = vertices_coords.reshape((-1, 3))
-        
-        # remove duplicated vertices and get associated tree connectivity
-        coords_view_rotor = numpy.ascontiguousarray(vertices_coords).view(
-            numpy.dtype((numpy.void, vertices_coords.dtype.itemsize * 3)))
-        _, idx_rotor, inv_rotor = numpy.unique(coords_view_rotor, return_index=True, return_inverse=True)
-        
-        # unique_vertices_coords = vertices_coords[idx] * self.parameters['coeff_dx']
-        unique_vertices_coords_rotor = vertices_coords[idx_rotor] * f.variables['lx_scales'][0]
-        connectivity_rotor = numpy.arange(ind_elm_rotor.size * 8).reshape((ind_elm_rotor.size, 8))
-        connectivity_rotor = inv_rotor[connectivity_rotor]
-        connectivity_rotor = numpy.concatenate(
-            ((8 * numpy.ones(connectivity_rotor.shape[0], dtype=numpy.int))[:, None], connectivity_rotor), 
-            axis = -1)
-        
-        # VTK rotor
-        vtk_rotor = create_bloc_non_structure_from_numpy_array(
-            coords = unique_vertices_coords_rotor, 
-            cells = connectivity_rotor.ravel(), 
-            cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_rotor.shape[0]), 
-            cellslocations = numpy.arange(connectivity_rotor.shape[0]) * 9)
-        del vertices_coords
-        
-        ###################
-        # STATOR
-        print 'traitement stator'
-        # ind_elm_stator = numpy.where(self.parameters['ref_frame_indices'] == 0)[0]
-        ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
-        # compute voxels vertices coordinates
-        vertices_coords = numpy.zeros((ind_elm_stator.size, 8, ndims))
-        vertices_coords[:, 0, :] = element_coords[ind_elm_stator, :]
-        vertices_coords[:, 1, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 0, 0])[None, :]
-        vertices_coords[:, 2, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 1, 0])[None, :]
-        vertices_coords[:, 3, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([0, 1, 0])[None, :]
-        vertices_coords[:, 4, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([0, 0, 1])[None, :]
-        vertices_coords[:, 5, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 0, 1])[None, :]
-        vertices_coords[:, 6, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([1, 1, 1])[None, :]
-        vertices_coords[:, 7, :] = element_coords[ind_elm_stator, :] + dx[ind_elm_stator, None] * numpy.array([0, 1, 1])[None, :]
-        vertices_coords = vertices_coords.reshape((-1, 3))
-        
-        # remove duplicated vertices and get associated tree connectivity
-        coords_view_stator = numpy.ascontiguousarray(vertices_coords).view(
-            numpy.dtype((numpy.void, vertices_coords.dtype.itemsize * 3)))
-        _, idx_stator, inv_stator = numpy.unique(coords_view_stator, return_index=True, return_inverse=True)
-        
-        # unique_vertices_coords = vertices_coords[idx] * self.parameters['coeff_dx']
-        unique_vertices_coords_stator = vertices_coords[idx_stator] * f.variables['lx_scales'][0]
-        connectivity_stator = numpy.arange(ind_elm_stator.size * 8).reshape((ind_elm_stator.size, 8))
-        connectivity_stator = inv_stator[connectivity_stator]
-        connectivity_stator = numpy.concatenate(
-            ((8 * numpy.ones(connectivity_stator.shape[0], dtype=numpy.int))[:, None], connectivity_stator), 
-            axis = -1)
-        
-        # VTK stator
-        vtk_stator = create_bloc_non_structure_from_numpy_array(
-            coords = unique_vertices_coords_stator, 
-            cells = connectivity_stator.ravel(), 
-            cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_stator.shape[0]), 
-            cellslocations = numpy.arange(connectivity_stator.shape[0]) * 9)
-        del vertices_coords
-        
+        # traitement en multitast
+        else:
+            vtk_rotor, vtk_stator = __assemble_maillage_FNC_in_parallel__(f, nb_procs, nb_tasks)
+            
         ####################
         # ASSEMBLAGE MULTIBLOCK ET STOCKAGE
         maillage = vtk.vtkMultiBlockDataSet()
@@ -1197,12 +1205,14 @@ class LecteurFNC(ObjetPyturbo):
                 ind_var_p = int(numpy.where(self.parameters['var_names'] == 'p')[0])
                 data_p = numpy.array(f.variables['measurements'][ind_temps, ind_var_p]).ravel() 
                 data_rho = data_p * self.parameters['irTlat'] * self.parameters['coeff_density']
-                self.output.SetBlock(0, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_rho[ind_elm_rotor], 'rho')
-                    )
-                self.output.SetBlock(1, 
-                    ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_rho[ind_elm_stator], 'rho')
-                    )
+                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
+                    self.output.SetBlock(0, 
+                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_rho[ind_elm_rotor], 'rho')
+                        )
+                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
+                    self.output.SetBlock(1, 
+                        ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_rho[ind_elm_stator], 'rho')
+                        )
             # amarsan - ATTENTION -- je suis pas certain que ca s'appelle rho...  
             if 'rho' in self.parameters['var_names']:
                 print 'Calcul de p a partir de rho'
@@ -1762,4 +1772,122 @@ class LecteurSNC(ObjetPyturbo):
         """
         return self.output
     #_________________________________________________________________
+#__________________________________________________________________________________________
+
+
+
+
+
+
+
+
+
+
+
+
+#__________________________________________________________________________________________
+# Cette fonction est utilisee dans le LecteurFNC
+# Fonction d'assemblage d'un sous-bloc
+def __compute_bloc__(args):
+    print 'RUN'
+    lx_scales, element_coords, dx, ind_elm = args[0], args[1], args[2], args[3]
+    nelm = element_coords.shape[0]
+    ndims = element_coords.shape[1]
+    # compute voxels vertices coordinates
+    vertices_coords = numpy.zeros((ind_elm.size, 8, ndims))
+    vertices_coords[:, 0, :] = element_coords[ind_elm, :]
+    vertices_coords[:, 1, :] = element_coords[ind_elm, :] + dx[ind_elm, None] * numpy.array([1, 0, 0])[None, :]
+    vertices_coords[:, 2, :] = element_coords[ind_elm, :] + dx[ind_elm, None] * numpy.array([1, 1, 0])[None, :]
+    vertices_coords[:, 3, :] = element_coords[ind_elm, :] + dx[ind_elm, None] * numpy.array([0, 1, 0])[None, :]
+    vertices_coords[:, 4, :] = element_coords[ind_elm, :] + dx[ind_elm, None] * numpy.array([0, 0, 1])[None, :]
+    vertices_coords[:, 5, :] = element_coords[ind_elm, :] + dx[ind_elm, None] * numpy.array([1, 0, 1])[None, :]
+    vertices_coords[:, 6, :] = element_coords[ind_elm, :] + dx[ind_elm, None] * numpy.array([1, 1, 1])[None, :]
+    vertices_coords[:, 7, :] = element_coords[ind_elm, :] + dx[ind_elm, None] * numpy.array([0, 1, 1])[None, :]
+    vertices_coords = vertices_coords.reshape((-1, 3))
+
+    # remove duplicated vertices and get associated tree connectivity
+    coords_view_rotor = numpy.ascontiguousarray(vertices_coords).view(
+        numpy.dtype((numpy.void, vertices_coords.dtype.itemsize * 3)))
+    _, idx_rotor, inv_rotor = numpy.unique(coords_view_rotor, return_index=True, return_inverse=True)
+
+    # unique_vertices_coords = vertices_coords[idx] * self.parameters['coeff_dx']
+    unique_vertices_coords_rotor = vertices_coords[idx_rotor] * lx_scales
+    connectivity_rotor = numpy.arange(ind_elm.size * 8).reshape((ind_elm.size, 8))
+    connectivity_rotor = inv_rotor[connectivity_rotor]
+    connectivity_rotor = numpy.concatenate(
+        ((8 * numpy.ones(connectivity_rotor.shape[0], dtype=numpy.int))[:, None], connectivity_rotor), 
+        axis = -1)
+
+    return unique_vertices_coords_rotor, connectivity_rotor
+
+
+def __assemble_maillage_FNC_in_parallel__(f, nb_procs, nb_tasks):
+    # read coordinates
+    element_coords = f.variables['coords']
+    voxel_scales = f.variables['voxel_scales']
+    nelm = element_coords.shape[0]
+    ndims = element_coords.shape[1]
+    lx_scales = f.variables['lx_scales'][0]
+    
+    # "Spatial offset"
+    element_coords =  element_coords[:, :] + f.variables['csys'][0, 0:3, 3]
+    
+    # voxel size
+    dx = 2**(1.0 + voxel_scales[:])
+    
+    ########## ROTOR ##########
+    print 'traitement rotor'
+    ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
+    # split an multiprocessing
+    list_args = []
+    for k in range(nb_tasks):
+        list_args.append([lx_scales, element_coords, dx, 
+            ind_elm_rotor[k * ind_elm_rotor.size / (nb_tasks - 1) : (k + 1) * ind_elm_rotor.size / (nb_tasks - 1)]
+            ])
+    
+    pool = multiprocessing.Pool(nb_procs)
+    liste_assemble = pool.map(__compute_bloc__, list_args, chunksize = 1)
+    pool.close()
+    
+    # assemble the multiblock
+    vtk_rotor = vtk.vtkMultiBlockDataSet()
+    numbloc = 0
+    for k in liste_assemble:
+        unique_vertices_coords_rotor, connectivity_rotor = k[0], k[1]
+        vtk_rotor_bloc = create_bloc_non_structure_from_numpy_array(
+            coords = unique_vertices_coords_rotor, 
+            cells = connectivity_rotor.ravel(), 
+            cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_rotor.shape[0]), 
+            cellslocations = numpy.arange(connectivity_rotor.shape[0]) * 9)
+        vtk_rotor.SetBlock(numbloc, vtk_rotor_bloc)
+        numbloc += 1
+    
+    ########## STATOR ##########
+    print 'traitement stator'
+    ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
+    # split an multiprocessing
+    list_args = []
+    for k in range(nb_tasks):
+        list_args.append([lx_scales, element_coords, dx, 
+            ind_elm_stator[k * ind_elm_stator.size / (nb_tasks - 1) : (k + 1) * ind_elm_stator.size / (nb_tasks - 1)]
+            ])
+    
+    pool = multiprocessing.Pool(nb_tasks)
+    liste_assemble = pool.map(__compute_bloc__, list_args, chunksize = 1)
+    pool.close()
+        
+    # assemble the multiblock
+    vtk_stator = vtk.vtkMultiBlockDataSet()
+    numbloc = 0
+    for k in liste_assemble:
+        unique_vertices_coords_stator, connectivity_stator = k[0], k[1]
+        vtk_stator_bloc = create_bloc_non_structure_from_numpy_array(
+            coords = unique_vertices_coords_stator, 
+            cells = connectivity_stator.ravel(), 
+            cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_stator.shape[0]), 
+            cellslocations = numpy.arange(connectivity_stator.shape[0]) * 9)
+        vtk_stator.SetBlock(numbloc, vtk_stator_bloc)
+        numbloc += 1
+
+    return vtk_rotor, vtk_stator
 #__________________________________________________________________________________________
