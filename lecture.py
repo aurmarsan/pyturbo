@@ -1070,7 +1070,7 @@ class LecteurFNC(ObjetPyturbo):
             list_args = []
             for k in range(nb_tasks):
                 list_args.append([lx_scales, element_coords, dx, 
-                    ind_elm_rotor[k * ind_elm_rotor.size / (nb_tasks - 1) : (k + 1) * ind_elm_rotor.size / (nb_tasks - 1)]
+                    ind_elm_rotor[k * ind_elm_rotor.size / nb_tasks : (k + 1) * ind_elm_rotor.size / nb_tasks]
                     ])
             
             pool = multiprocessing.Pool(nb_procs)
@@ -1108,7 +1108,7 @@ class LecteurFNC(ObjetPyturbo):
             list_args = []
             for k in range(nb_tasks):
                 list_args.append([lx_scales, element_coords, dx, 
-                    ind_elm_stator[k * ind_elm_stator.size / (nb_tasks - 1) : (k + 1) * ind_elm_stator.size / (nb_tasks - 1)]
+                    ind_elm_stator[k * ind_elm_stator.size / nb_tasks : (k + 1) * ind_elm_stator.size / nb_tasks]
                     ])
             
             pool = multiprocessing.Pool(nb_tasks)
