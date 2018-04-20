@@ -2,7 +2,8 @@ import numpy
 import struct
 import glob
 import sys
-from scipy.io import netcdf
+# from scipy.io import netcdf
+import netCDF4
 import multiprocessing
 
 
@@ -937,13 +938,15 @@ class LecteurFNC(ObjetPyturbo):
     #_________________________________________________________________
     def lire_parametres(self):
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        # f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         
         self.parameters = {}
         # print "Offsets and scales"
         self.parameters['lx_offsets'] = f.variables['lx_offsets'][:]
         self.parameters['lx_scales'] = f.variables['lx_scales'][:]
         self.parameters['offset_coords'] = f.variables['csys'][0, 0:3, 3]
+        self.parameters['coords_shape'] = f.variables['coords'][:].shape
 
         # print "Scaling factors"
         self.parameters['coeff_dx'] = f.variables['lx_scales'][0]
@@ -1014,10 +1017,20 @@ class LecteurFNC(ObjetPyturbo):
     #_________________________________________________________________
     
     #_________________________________________________________________
+    def get_infile_coordinates(self):
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
+        coords = (f.variables['coords'][:] + f.variables['csys'][0, 0:3, 3]) * f.variables['lx_scales'][0]
+        f.close()
+        return coords
+    #_________________________________________________________________
+    
+    #_________________________________________________________________
     def get_infos_variables(self):
         """Retourne les informations sur les variables disponibles
         """
         print 'Variables disponibles : ', self.parameters['var_names']
+        print 'Coordinates shape : ', self.parameters['coords_shape']
         return 0
     #_________________________________________________________________
     
@@ -1031,7 +1044,8 @@ class LecteurFNC(ObjetPyturbo):
         si nb_tasks is not None, alors on le fait en parallele en utilisant multiprocessing Pool
         """
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         
         # read coordinates
         element_coords = f.variables['coords'][:]
@@ -1056,7 +1070,10 @@ class LecteurFNC(ObjetPyturbo):
         print 'traitement rotor'
         ind_elm_rotor = numpy.where(ref_frame_indices == 0)[0]
         
-        if nb_tasks == None or nb_tasks == 1:
+        if ind_elm_rotor.size == 0:
+            vtk_rotor = None
+        
+        elif nb_tasks == None or nb_tasks == 1:
             # monotask
             unique_vertices_coords, connectivity = __compute_bloc__([lx_scales, element_coords, dx, ind_elm_rotor])
             vtk_rotor = create_bloc_non_structure_from_numpy_array(
@@ -1094,7 +1111,10 @@ class LecteurFNC(ObjetPyturbo):
         print 'traitement stator'
         ind_elm_stator = numpy.where(ref_frame_indices == -1)[0]
         
-        if nb_tasks == None or nb_tasks == 1:
+        if ind_elm_stator.size == 0:
+            vtk_stator = None
+            
+        elif nb_tasks == None or nb_tasks == 1:
             # monotask
             unique_vertices_coords, connectivity = __compute_bloc__([lx_scales, element_coords, dx, ind_elm_stator])
             vtk_stator = create_bloc_non_structure_from_numpy_array(
@@ -1160,7 +1180,7 @@ class LecteurFNC(ObjetPyturbo):
     
     
     #_________________________________________________________________
-    def lire_datas(self, ind_temps, noms_vars=None, rotation_rotor=True, axe=2, numbloc=None):
+    def lire_datas(self, ind_temps, noms_vars=None, rotation_rotor=True, axe=2, numbloc=None, index_points = None):
         """ Lecture des datas au temps indique par ind_time
             - ind_temps est donne l'index du temps a lire
             - noms_vars est une liste des variables a lire. Si elle est None, toutes les variables disponibles sont lues
@@ -1171,18 +1191,37 @@ class LecteurFNC(ObjetPyturbo):
             self.output.SetBlock(0 if numbloc is 1 else 1, None)
         
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         print "reading variable data"
         
+        ref_frame_indices = f.variables['ref_frame_indices'][:]
+        
+        if index_points is not None:
+            ref_frame_indices = ref_frame_indices[index_points]
+        
         # indice des voxels du rotor et du stator
-        ind_elm_rotor = numpy.where(f.variables['ref_frame_indices'][:] == 0)[0]
-        ind_elm_stator = numpy.where(f.variables['ref_frame_indices'][:] == -1)[0]
+        ind_elm_rotor = numpy.where(ref_frame_indices == 0)[0]
+        ind_elm_stator = numpy.where(ref_frame_indices == -1)[0]
+        
+        # distinction des header et des fichiers fnc complets
+        if f.file_per_frame_p == 0:
+            measurements = f.variables['measurements']
+        else:
+            doss_frames = f.filepath().rpartition('/')[0]
+            name_frames = f.filepath().rpartition('/')[2][:-8]
+            f_frame = netCDF4.Dataset(
+                '{0}/{1}.fnc.frames/{1}.fnc.{2}'.format(doss_frames, name_frames, ind_temps))
+            measurements = f_frame.variables['measurements']
         
         for nom_var in self.parameters['var_names'] if noms_vars is None else noms_vars:
             if nom_var in self.parameters['var_names']:
                 print "Chargement et redimensionnement de {0} a l'index temporel {1}".format(nom_var, ind_temps)
                 ind_var = int(numpy.where(self.parameters['var_names'] == nom_var)[0])
-                data_var = numpy.array(f.variables['measurements'][ind_temps, ind_var]).ravel()
+                if measurements.ndim == 3:
+                    data_var = numpy.array(measurements[ind_temps, ind_var]).ravel()
+                elif measurements.ndim == 2:
+                    data_var = numpy.array(measurements[ind_var]).ravel()
                 
                 # redimensionnement
                 if nom_var is 'p':
@@ -1190,11 +1229,11 @@ class LecteurFNC(ObjetPyturbo):
                 if nom_var[0] == 'v':
                     data_var = data_var * self.parameters['coeff_vel']
                     
-                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
+                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None and ind_elm_rotor.size > 0:
                     self.output.SetBlock(0, 
                         ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_var[ind_elm_rotor], self.parameters['var_names'][ind_var])
                         )
-                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
+                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None and ind_elm_stator.size > 0:
                     self.output.SetBlock(1, 
                         ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_var[ind_elm_stator], self.parameters['var_names'][ind_var])
                         )
@@ -1204,13 +1243,16 @@ class LecteurFNC(ObjetPyturbo):
             if 'p' in self.parameters['var_names']:
                 print 'Calcul de rho a partir de p'
                 ind_var_p = int(numpy.where(self.parameters['var_names'] == 'p')[0])
-                data_p = numpy.array(f.variables['measurements'][ind_temps, ind_var_p]).ravel() 
+                if measurements.ndim == 3:
+                    data_p = numpy.array(measurements[ind_temps, ind_var_p]).ravel()
+                elif measurements.ndim == 2:
+                    data_p = numpy.array(measurements[ind_var_p]).ravel()
                 data_rho = data_p * self.parameters['irTlat'] * self.parameters['coeff_density']
-                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
+                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None and ind_elm_rotor.size > 0:
                     self.output.SetBlock(0, 
                         ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_rho[ind_elm_rotor], 'rho')
                         )
-                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
+                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None and ind_elm_stator.size > 0:
                     self.output.SetBlock(1, 
                         ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_rho[ind_elm_stator], 'rho')
                         )
@@ -1218,13 +1260,16 @@ class LecteurFNC(ObjetPyturbo):
             if 'rho' in self.parameters['var_names']:
                 print 'Calcul de p a partir de rho'
                 ind_var_rho = int(numpy.where(self.parameters['var_names'] == 'rho')[0])
-                data_rho = numpy.array(f.variables['measurements'][ind_temps, ind_var_rho]).ravel() 
+                if measurements.ndim == 3:
+                    data_rho = numpy.array(measurements[ind_temps, ind_var_rho]).ravel()
+                elif measurements.ndim == 2:
+                    data_rho = numpy.array(measurements[ind_var_rho]).ravel()
                 data_p = (data_rho * self.parameters['rTlat'] + self.parameters['offset_pressure']) * self.parameters['coeff_press']
-                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None:
+                if (numbloc is None or numbloc == 0) and self.output.GetBlock(0) is not None and ind_elm_rotor.size > 0:
                     self.output.SetBlock(0, 
                         ajouter_numpy_array_as_vtk_array(self.output.GetBlock(0), data_p[ind_elm_rotor], 'p')
                         )
-                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None:
+                if (numbloc is None or numbloc == 1) and self.output.GetBlock(1) is not None and ind_elm_stator.size > 0:
                     self.output.SetBlock(1, 
                         ajouter_numpy_array_as_vtk_array(self.output.GetBlock(1), data_p[ind_elm_stator], 'p')
                         )
@@ -1266,7 +1311,8 @@ class LecteurPFNC(ObjetPyturbo):
     #_________________________________________________________________
     def lire_parametres(self):
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         
         self.parameters = {}
         # print "Offsets and scales"
@@ -1355,7 +1401,8 @@ class LecteurPFNC(ObjetPyturbo):
             - noms_vars est une liste des variables a lire. Si elle est None, toutes les variables disponibles sont lues
         """
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         print "reading variable data"
         
         # initialisation du dictionnaire output qui va contenir les coordonnees et les donnees
@@ -1425,7 +1472,8 @@ class LecteurSNC(ObjetPyturbo):
     #_________________________________________________________________
     def lire_parametres(self):
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         
         self.parameters = {}
         # print "Offsets and scales"
@@ -1540,7 +1588,8 @@ class LecteurSNC(ObjetPyturbo):
         bloc 1 : stator
         """
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         
         print 'Chargement de la geometrie'
         # read coordinates
@@ -1643,7 +1692,8 @@ class LecteurSNC(ObjetPyturbo):
         """ Fonction qui retourne les index des sous-ensemble des surfaces
         et les noms associes
         """
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         index = numpy.unique(f.variables['face'][:])
         faces_names = numpy.take(f.variables['face_names'][:].tostring().split('\x00'), index)
         print numpy.c_[index, faces_names]
@@ -1703,7 +1753,8 @@ class LecteurSNC(ObjetPyturbo):
             output.SetBlock(0 if numbloc is 1 else 1, None)
         
         print "Ouverture {0}".format(self.file_path)
-        f = netcdf.netcdf_file(self.file_path, 'r')
+        #f = netcdf.netcdf_file(self.file_path, 'r')
+        f = netCDF4.Dataset(self.file_path, 'r')
         print "reading variable data"
         
         for nom_var in self.parameters['var_names'] if noms_vars is None else noms_vars:
