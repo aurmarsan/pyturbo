@@ -513,7 +513,7 @@ class CalculettePyturbo(ObjetPyturbo):
             if self.__input_has_array__(quantity) == False:
                 if quantity in numpy.asarray(self.dictionnaire_des_formules.values())[:, -1]:
                     index = numpy.where(numpy.asarray(
-                        self.dictionnaire_des_formules.values())[:, -1] == quantity)[0]
+                        self.dictionnaire_des_formules.values())[:, -1] == quantity)[0][0]
                     to_do.append(self.dictionnaire_des_formules.values()[index])
                 else:
                     previous_variables = dict.fromkeys(get_variables_in_function(quantity))
