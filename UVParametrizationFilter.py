@@ -199,7 +199,6 @@ def CreateSpline(hubFileName, tipFileName, stepSize=1.0, relativeExtension=0.1,
     #plt.show()
     #sys.exit()
     
-    
     spl_mid = ParametricUnivariateSpline(transpose(centers))
     
     uvMin = -relativeExtension

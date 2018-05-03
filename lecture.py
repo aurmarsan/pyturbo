@@ -1013,7 +1013,7 @@ class LecteurFNC(ObjetPyturbo):
                 1. / (self.parameters['current_time'][1] - self.parameters['current_time'][0])
                 )
         print 'Nombre de pas de temps : ', self.parameters['current_time'].size
-        return 0
+        return self.parameters['current_time']
     #_________________________________________________________________
     
     #_________________________________________________________________
@@ -1035,13 +1035,16 @@ class LecteurFNC(ObjetPyturbo):
     #_________________________________________________________________
     
     #_________________________________________________________________
-    def lire_maillage(self, nb_tasks = None, nb_procs = 2, index_points = None):
+    def lire_maillage(self, nb_tasks = None, nb_procs = 2, index_points = None, numbloc=None):
         """ Lecture de la geometrie. self.maillage est un multibloc. 
         Block 0 = rotor
         Block 1 = stator
         
         nb_tasks permet de diviser les blocs rotor et stator en plusieurs blocs
         si nb_tasks is not None, alors on le fait en parallele en utilisant multiprocessing Pool
+        
+        numbloc est applique APRES index_points et permet de ne traiter que le rotor (numbloc = 0)
+        ou que le stator (numbloc = 1)
         """
         print "Ouverture {0}".format(self.file_path)
         #f = netcdf.netcdf_file(self.file_path, 'r')
@@ -1067,86 +1070,84 @@ class LecteurFNC(ObjetPyturbo):
         dx = 2**(1.0 + voxel_scales[:])
         
         ########## ROTOR ##########
-        print 'traitement rotor'
         ind_elm_rotor = numpy.where(ref_frame_indices == 0)[0]
-        
-        if ind_elm_rotor.size == 0:
+        if numbloc == 1 or ind_elm_rotor.size == 0:
             vtk_rotor = None
-        
-        elif nb_tasks == None or nb_tasks == 1:
-            # monotask
-            unique_vertices_coords, connectivity = __compute_bloc__([lx_scales, element_coords, dx, ind_elm_rotor])
-            vtk_rotor = create_bloc_non_structure_from_numpy_array(
-                coords = unique_vertices_coords, 
-                cells = connectivity.ravel(), 
-                cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity.shape[0]), 
-                cellslocations = numpy.arange(connectivity.shape[0]) * 9)
-        
         else:
-            # split an multiprocessing
-            list_args = []
-            for k in range(nb_tasks):
-                list_args.append([lx_scales, element_coords, dx, 
-                    ind_elm_rotor[k * ind_elm_rotor.size / nb_tasks : (k + 1) * ind_elm_rotor.size / nb_tasks]
-                    ])
-            
-            pool = multiprocessing.Pool(nb_procs)
-            liste_assemble = pool.map(__compute_bloc__, list_args, chunksize = 1)
-            pool.close()
-            
-            # assemble the multiblock
-            vtk_rotor = vtk.vtkMultiBlockDataSet()
-            numbloc = 0
-            for k in liste_assemble:
-                unique_vertices_coords, connectivity = k[0], k[1]
-                vtk_rotor_bloc = create_bloc_non_structure_from_numpy_array(
+            print 'traitement rotor'
+            if nb_tasks == None or nb_tasks == 1:
+                # monotask
+                unique_vertices_coords, connectivity = __compute_bloc__([lx_scales, element_coords, dx, ind_elm_rotor])
+                vtk_rotor = create_bloc_non_structure_from_numpy_array(
                     coords = unique_vertices_coords, 
                     cells = connectivity.ravel(), 
                     cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity.shape[0]), 
                     cellslocations = numpy.arange(connectivity.shape[0]) * 9)
-                vtk_rotor.SetBlock(numbloc, vtk_rotor_bloc)
-                numbloc += 1
+            
+            else:
+                # split an multiprocessing
+                list_args = []
+                for k in range(nb_tasks):
+                    list_args.append([lx_scales, element_coords, dx, 
+                        ind_elm_rotor[k * ind_elm_rotor.size / nb_tasks : (k + 1) * ind_elm_rotor.size / nb_tasks]
+                        ])
+                
+                pool = multiprocessing.Pool(nb_procs)
+                liste_assemble = pool.map(__compute_bloc__, list_args, chunksize = 1)
+                pool.close()
+                
+                # assemble the multiblock
+                vtk_rotor = vtk.vtkMultiBlockDataSet()
+                ind_bloc = 0
+                for k in liste_assemble:
+                    unique_vertices_coords, connectivity = k[0], k[1]
+                    vtk_rotor_bloc = create_bloc_non_structure_from_numpy_array(
+                        coords = unique_vertices_coords, 
+                        cells = connectivity.ravel(), 
+                        cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity.shape[0]), 
+                        cellslocations = numpy.arange(connectivity.shape[0]) * 9)
+                    vtk_rotor.SetBlock(ind_bloc, vtk_rotor_bloc)
+                    ind_bloc += 1
         
         ########## STATOR ##########
-        print 'traitement stator'
         ind_elm_stator = numpy.where(ref_frame_indices == -1)[0]
-        
-        if ind_elm_stator.size == 0:
+        if numbloc == 0 or ind_elm_stator.size == 0:
             vtk_stator = None
-            
-        elif nb_tasks == None or nb_tasks == 1:
-            # monotask
-            unique_vertices_coords, connectivity = __compute_bloc__([lx_scales, element_coords, dx, ind_elm_stator])
-            vtk_stator = create_bloc_non_structure_from_numpy_array(
-                coords = unique_vertices_coords, 
-                cells = connectivity.ravel(), 
-                cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity.shape[0]), 
-                cellslocations = numpy.arange(connectivity.shape[0]) * 9)
-        
         else:
-            # split an multiprocessing
-            list_args = []
-            for k in range(nb_tasks):
-                list_args.append([lx_scales, element_coords, dx, 
-                    ind_elm_stator[k * ind_elm_stator.size / nb_tasks : (k + 1) * ind_elm_stator.size / nb_tasks]
-                    ])
+            print 'traitement stator'
+            if nb_tasks == None or nb_tasks == 1:
+                # monotask
+                unique_vertices_coords, connectivity = __compute_bloc__([lx_scales, element_coords, dx, ind_elm_stator])
+                vtk_stator = create_bloc_non_structure_from_numpy_array(
+                    coords = unique_vertices_coords, 
+                    cells = connectivity.ravel(), 
+                    cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity.shape[0]), 
+                    cellslocations = numpy.arange(connectivity.shape[0]) * 9)
             
-            pool = multiprocessing.Pool(nb_tasks)
-            liste_assemble = pool.map(__compute_bloc__, list_args, chunksize = 1)
-            pool.close()
+            else:
+                # split an multiprocessing
+                list_args = []
+                for k in range(nb_tasks):
+                    list_args.append([lx_scales, element_coords, dx, 
+                        ind_elm_stator[k * ind_elm_stator.size / nb_tasks : (k + 1) * ind_elm_stator.size / nb_tasks]
+                        ])
                 
-            # assemble the multiblock
-            vtk_stator = vtk.vtkMultiBlockDataSet()
-            numbloc = 0
-            for k in liste_assemble:
-                unique_vertices_coords_stator, connectivity_stator = k[0], k[1]
-                vtk_stator_bloc = create_bloc_non_structure_from_numpy_array(
-                    coords = unique_vertices_coords_stator, 
-                    cells = connectivity_stator.ravel(), 
-                    cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_stator.shape[0]), 
-                    cellslocations = numpy.arange(connectivity_stator.shape[0]) * 9)
-                vtk_stator.SetBlock(numbloc, vtk_stator_bloc)
-                numbloc += 1
+                pool = multiprocessing.Pool(nb_tasks)
+                liste_assemble = pool.map(__compute_bloc__, list_args, chunksize = 1)
+                pool.close()
+                    
+                # assemble the multiblock
+                vtk_stator = vtk.vtkMultiBlockDataSet()
+                ind_bloc = 0
+                for k in liste_assemble:
+                    unique_vertices_coords_stator, connectivity_stator = k[0], k[1]
+                    vtk_stator_bloc = create_bloc_non_structure_from_numpy_array(
+                        coords = unique_vertices_coords_stator, 
+                        cells = connectivity_stator.ravel(), 
+                        cellstypes = vtk.vtkHexahedron().GetCellType() * numpy.ones(connectivity_stator.shape[0]), 
+                        cellslocations = numpy.arange(connectivity_stator.shape[0]) * 9)
+                    vtk_stator.SetBlock(ind_bloc, vtk_stator_bloc)
+                    ind_bloc += 1
             
         ####################
         # ASSEMBLAGE MULTIBLOCK ET STOCKAGE
@@ -1211,7 +1212,7 @@ class LecteurFNC(ObjetPyturbo):
             doss_frames = f.filepath().rpartition('/')[0]
             name_frames = f.filepath().rpartition('/')[2][:-8]
             f_frame = netCDF4.Dataset(
-                '{0}/{1}.fnc.frames/{1}.fnc.{2}'.format(doss_frames, name_frames, ind_temps))
+                '{0}/{1}.fnc.frames/{1}.fnc.{2:03d}'.format(doss_frames, name_frames, ind_temps))
             measurements = f_frame.variables['measurements']
         
         for nom_var in self.parameters['var_names'] if noms_vars is None else noms_vars:
@@ -1223,6 +1224,9 @@ class LecteurFNC(ObjetPyturbo):
                 elif measurements.ndim == 2:
                     data_var = numpy.array(measurements[ind_var]).ravel()
                 
+                if index_points is not None:
+                    data_var = data_var[index_points]
+                    
                 # redimensionnement
                 if nom_var is 'p':
                     data_var = (data_var + self.parameters['offset_pressure']) * self.parameters['coeff_press']
@@ -1384,7 +1388,7 @@ class LecteurPFNC(ObjetPyturbo):
             1. / (self.parameters['current_time'][1] - self.parameters['current_time'][0])
             )
         print 'Nombre de pas de temps : ', self.parameters['current_time'].size
-        return 0
+        return self.parameters['current_time']
     #_________________________________________________________________
     
     #_________________________________________________________________
@@ -1559,7 +1563,7 @@ class LecteurSNC(ObjetPyturbo):
                 1. / (self.parameters['current_time'][1] - self.parameters['current_time'][0])
                 )
         print 'Nombre de pas de temps : ', self.parameters['current_time'].size
-        return 0
+        return self.parameters['current_time']
     #_________________________________________________________________
     
     #_________________________________________________________________
