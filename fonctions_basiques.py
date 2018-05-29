@@ -1967,8 +1967,10 @@ def create_polydata_from_numpy_array(coords, polys=None, nb_polys=None, isline=F
             polys.ravel(), deep = 1, array_type = vtk.vtkIdTypeArray().GetDataType()
             ))
         
-        bloc.SetPolys(vtkCells) if isline is False else bloc.SetLines(vtkCells)
-        
+        if isline:
+            bloc.SetLines(vtkCells)
+        else:
+            bloc.SetPolys(vtkCells)
     return bloc
 #_____________________________________________________________________
 
